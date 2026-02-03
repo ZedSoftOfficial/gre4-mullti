@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Multi GRE Tunnel Manager – روح نسخه فیکس‌شده
+# GRE Tunnel Manager: 1 Kharej <-> 2 Iran
 
 if [[ $EUID -ne 0 ]]; then
    echo "Run as root"
@@ -20,26 +20,28 @@ validate_ipv4() {
 }
 
 ###############################################
-###  IRAN SERVER CONFIG
+# IRAN SERVER (MULTI)
 ###############################################
 config_iran() {
-    echo "Configuring Iran Server..."
+    echo "Iran Server Configuration"
+    echo "Select which Iran server this is:"
+    echo "1) Iran Server #1"
+    echo "2) Iran Server #2"
+    read -p "Choice (1/2): " iran_id
 
-    read -p "Enter Iran Public IPv4: " iran_ipv4
+    case "$iran_id" in
+        1) tid=1 ;;
+        2) tid=2 ;;
+        *) echo "Invalid Iran ID"; exit 1 ;;
+    esac
+
+    read -p "Enter THIS Iran Public IPv4: " iran_ipv4
     validate_ipv4 "$iran_ipv4" || exit 1
 
     read -p "Enter Kharej Public IPv4: " kharej_ipv4
     validate_ipv4 "$kharej_ipv4" || exit 1
 
-    echo ""
-    echo "⚠ هر ایران باید Tunnel ID متفاوت داشته باشد"
-    echo "مثال: ایران اول = 1 ، ایران دوم = 2"
-    echo ""
-    read -p "Enter Tunnel ID (1-254): " tid
-
-    echo ""
-    echo "پورت‌هایی که باید تونل شوند را وارد کن (با فاصله)"
-    echo "مثال: 22 80 443 2087"
+    echo "Enter ports to tunnel (space separated):"
     read -p "Ports: " ports
 
     cat > /etc/rc.local << EOF
@@ -47,7 +49,7 @@ config_iran() {
 
 sysctl -w net.ipv4.conf.all.forwarding=1
 
-# GRE Tunnel for Iran (ID $tid)
+# GRE Tunnel for Iran #$iran_id (ID $tid)
 ip tunnel add GRE$tid mode gre remote $kharej_ipv4 local $iran_ipv4
 ip addr add 172.16.$tid.1/30 dev GRE$tid
 ip link set GRE$tid mtu 1420
@@ -72,58 +74,48 @@ EOF
 }
 
 ###############################################
-###  KHAREJ SERVER CONFIG (MULTI IRAN)
+# KHAREJ SERVER (MULTI IRAN)
 ###############################################
 config_kharej() {
-    echo "Configuring Kharej Server (Multi Iran)..."
+    echo "Kharej Server Configuration (Multi Iran)"
 
     read -p "Enter Kharej Public IPv4: " kharej_ipv4
     validate_ipv4 "$kharej_ipv4" || exit 1
 
-    read -p "How many Iran servers? " iran_count
+    echo "Enter Iran #1 Public IPv4:"
+    read -p "Iran #1 IPv4: " iran1_ipv4
+    validate_ipv4 "$iran1_ipv4" || exit 1
 
-    declare -A iran_ips
-    declare -A iran_tids
-
-    for ((i=1; i<=iran_count; i++)); do
-        echo ""
-        echo "Iran #$i"
-        read -p "Public IPv4: " ip
-        validate_ipv4 "$ip" || exit 1
-        iran_ips[$i]=$ip
-
-        read -p "Tunnel ID for Iran #$i (1-254): " tid
-        iran_tids[$i]=$tid
-    done
+    echo "Enter Iran #2 Public IPv4:"
+    read -p "Iran #2 IPv4: " iran2_ipv4
+    validate_ipv4 "$iran2_ipv4" || exit 1
 
     cat > /etc/rc.local << EOF
 #!/bin/bash
+
 sysctl -w net.ipv4.conf.all.forwarding=1
+
+# GRE1 to Iran #1
+ip tunnel add GRE1 mode gre local $kharej_ipv4 remote $iran1_ipv4
+ip addr add 172.16.1.2/30 dev GRE1
+ip link set GRE1 mtu 1420
+ip link set GRE1 up
+
+# GRE2 to Iran #2
+ip tunnel add GRE2 mode gre local $kharej_ipv4 remote $iran2_ipv4
+ip addr add 172.16.2.2/30 dev GRE2
+ip link set GRE2 mtu 1420
+ip link set GRE2 up
+
+exit 0
 EOF
-
-    for ((i=1; i<=iran_count; i++)); do
-        ip=${iran_ips[$i]}
-        tid=${iran_tids[$i]}
-
-        cat >> /etc/rc.local << EOF
-
-# GRE Tunnel to Iran #$i (ID $tid)
-ip tunnel add GRE$tid mode gre local $kharej_ipv4 remote $ip
-ip addr add 172.16.$tid.2/30 dev GRE$tid
-ip link set GRE$tid mtu 1420
-ip link set GRE$tid up
-
-EOF
-    done
-
-    echo "exit 0" >> /etc/rc.local
 
     chmod +x /etc/rc.local
     bash /etc/rc.local
 }
 
 ###############################################
-###  REMOVE ALL TUNNELS
+# REMOVE ALL TUNNELS
 ###############################################
 remove_all() {
     echo "Removing all GRE tunnels and NAT rules..."
@@ -136,13 +128,13 @@ remove_all() {
 
     rm -f /etc/rc.local
 
-    echo "Cleanup done."
+    echo "Cleanup complete."
 }
 
 ###############################################
-###  MENU
+# MENU
 ###############################################
-echo "1) Configure Iran Server"
+echo "1) Configure Iran Server (Multi)"
 echo "2) Configure Kharej Server (Multi Iran)"
 echo "3) Remove All Tunnels"
 read -p "Choice: " choice
